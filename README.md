@@ -1,2 +1,4 @@
-# pyappkit
-Bunch of libraries to build application
+# Python Application Kit
+
+# APIs
+## run_daemon
