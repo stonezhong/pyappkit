@@ -203,11 +203,12 @@ def _worker_entry(entry: str,
     if logging_config is not None:
         logging.config.dictConfig(logging_config)
     logger = logging.getLogger(__name__)
-    entry = __get_method(entry)
+    entry_f = __get_method(entry)
 
-    logger.info(f"{entry}: enter")
     try:
-        entry(args, status_quit_requested)
+        logger.info(f"{entry}: enter")
+        entry_f(args, status_quit_requested)
+        logger.info(f"{entry}: exit")
     except Exception:
         logger.exception(f"{entry} failed")
         raise
