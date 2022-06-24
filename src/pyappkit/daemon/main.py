@@ -177,7 +177,7 @@ def run_daemon(*,
         logger = logging.getLogger(__name__)
 
         initialize_ok = True
-        logging.info(f"daemon {pid_filename}: initialized")
+        logger.info(f"daemon {pid_filename}: initialized")
     finally:
         if not initialize_ok:
             __safe_remove(pid_filename)
@@ -189,6 +189,7 @@ def run_daemon(*,
             daemon_args = {}
         daemon_main(daemon_args, __quit_requested)
         logger.info(f"{pid_filename}: exit")
+        sys.exit(0)
     except Exception:
         logger.exception(f"{pid_filename}: failed")
         raise
