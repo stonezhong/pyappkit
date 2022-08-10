@@ -8,7 +8,8 @@ import time
 from enum import Enum
 from typing import Tuple, Any, Optional, IO, Dict, Callable, List
 import logging.config
-
+import argparse
+import json
 
 from multiprocessing import Process, Value
 
@@ -238,3 +239,65 @@ def run_worker(worker_info: List[Tuple[str, Optional[Dict], Optional[Dict]]],
     status_quit_requested.value = True
     for p in sub_processes:
         p.join()
+
+def daemon() -> None:
+    sys.path.insert(0, '')          # add current directory
+    default_log_config = {
+        "version": 1,
+        "disable_existing_loggers": True,
+        "formatters": {
+            "standard": {
+                "format": "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+            }
+        },
+        "handlers": {
+            'console': {
+                'level': 'INFO',
+                'formatter': 'standard',
+                'class': 'logging.StreamHandler',
+                'stream': 'ext://sys.stdout'
+            },
+        },
+        "root": {
+            "handlers": ["console"],
+            "level": "DEBUG",
+        },
+    }
+
+    parser = argparse.ArgumentParser(
+        description='Daemon Launch Tool'
+    )
+    parser.add_argument(
+        "--log", type=str, required=False, help="Specify log config file",
+    )
+    parser.add_argument(
+        "--pid", type=str, required=False, default="daemon.pid", help="Specify pid filename"
+    )
+    parser.add_argument(
+        "--stdout", type=str, required=False, default="/dev/stdout", help="Specify stdout filename"
+    )
+    parser.add_argument(
+        "--stderr", type=str, required=False, default="/dev/stderr", help="Specify stderr filename"
+    )
+    parser.add_argument(
+        "-e", "--entry", type=str, required=True, help="Specify entry point"
+    )
+    args, _ = parser.parse_known_args()
+
+    if args.log is None:
+        log_config = default_log_config
+    else:
+        with open(args.log, "r") as f:
+            log_config = json.load(f)
+
+    status, extra = run_daemon(
+        pid_filename    = args.pid,
+        stdout_filename = args.stdout,
+        stderr_filename = args.stderr,
+        daemon_entry    = args.entry,
+        logging_config  = log_config,
+    )
+    if status == DaemonRunStatus.LAUNCHED:
+        print(f"Daemon launched, pid = {extra}, pid_filename = {args.pid}")
+    else:
+        print(f"Unable to launch daemon, status={status}, extra={extra}")

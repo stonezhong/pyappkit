@@ -11,7 +11,7 @@ with open(os.path.join(HERE, "README.md"), "r") as f:
 # This call to setup() does all the work
 setup(
     name="pyappkit",
-    version="0.0.4",
+    version="0.0.5",
     description="Python Application Kit",
     long_description=README,
     long_description_content_type="text/markdown",
@@ -26,4 +26,9 @@ setup(
     package_dir={'': 'src'},
     packages=find_packages(where='src'),
     install_requires=[],
+    entry_points={
+        "console_scripts": [
+            "daemon=pyappkit.daemon.main:daemon",
+        ]
+    },
 )
