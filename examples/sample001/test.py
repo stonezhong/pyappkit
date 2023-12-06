@@ -2,6 +2,7 @@
 # -*- coding: UTF-8 -*-
 import os
 from pyappkit import run_daemon, DaemonRunStatus
+from datetime import timedelta
 
 LOG_CONFIG = {
     "version": 1,
@@ -36,7 +37,8 @@ def main():
         stderr_filename=".data/err.txt",
         daemon_entry="daemon_impl:main",
         logging_config=LOG_CONFIG,
-        daemon_args=dict(foo=1, bar=2)
+        daemon_args=dict(foo=1, bar=2),
+        restart_interval=timedelta(seconds=10)
     )
     if status == DaemonRunStatus.LAUNCHED:
         print(f"Daemon launched, pid = {extra}")
