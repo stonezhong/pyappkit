@@ -15,10 +15,6 @@ import math
 
 from multiprocessing import Process, Value
 
-##################################################################################################
-# If guardian receives SIGTERM, it kills executor process if there is one
-##################################################################################################
-
 class DaemonRunStatus(Enum):
     LAUNCHED = 1
     ALREADY_RUNNING = 2
@@ -30,26 +26,33 @@ class ExecutorStatus(Enum):
     FORK_FAILED = 1
     FINISHED = 2
 
-__APP_CONTEXT = {
-    'quit_requested': False,
-    'executor_pid': None,
-    'is_guardian': True
-}
+class AppContext:
+    quit_requested: bool
+    executor_pid: Optional[int]
+    guardian_pid: Optional[int]
+    is_guardian: bool
+
+    def __init__(self, is_guardian:bool):
+        self.quit_requested = False
+        self.is_guardian = is_guardian
+        self.executor_pid = None
+        self.guardian_pid = None
+
+__APP_CONTEXT = AppContext(is_guardian=True)
 
 def __request_guardian_shutdown(signal_umber, frame):
     _, _ = signal_umber, frame
-    __APP_CONTEXT['quit_requested'] = True
-    executor_pid = __APP_CONTEXT['executor_pid']
-    if executor_pid is not None:
-        __safe_kill(executor_pid)
+    __APP_CONTEXT.quit_requested = True
+    __safe_kill(__APP_CONTEXT.executor_pid)
 
 def __request_executor_shutdown(signal_umber, frame):
     _, _ = signal_umber, frame
-    __APP_CONTEXT['quit_requested'] = True
+    __APP_CONTEXT.quit_requested = True
+    __safe_kill(__APP_CONTEXT.guardian_pid)
 
 
 def __quit_requested():
-    return __APP_CONTEXT['quit_requested']
+    return __APP_CONTEXT.quit_requested
 
 
 def __get_method(method_name):
@@ -81,7 +84,8 @@ def __safe_remove(filename: str):
 
 def __safe_kill(pid:int):
     try:
-        os.kill(pid, signal.SIGTERM)
+        if pid is not None:
+            os.kill(pid, signal.SIGTERM)
     except OSError:
         pass
 
@@ -92,18 +96,34 @@ def __safe_close(f: IO):
     except OSError:
         pass
 
+def __safe_close_io(in_f:IO, out_f: IO, err_f: IO):
+    if out_f is err_f:
+        __safe_close(out_f)
+    else:
+        __safe_close(out_f)
+        __safe_close(err_f)
+    __safe_close(in_f)
+
 def __execute_daemon_with_retry(daemon_main, daemon_args, logger, restart_interval):
+    executor_launch_count = 0
     logger.debug("__execute_daemon_with_retry(guardian): enter")
-    while not __quit_requested():
+    seconds_to_sleep = math.ceil(restart_interval.total_seconds())
+    while True:
+        if __quit_requested():
+            logger.debug(f"__execute_daemon_with_retry(guardian): executor_launch_count={executor_launch_count}, bail out since quit requested")
+            break
+        logger.debug(f"__execute_daemon_with_retry(guardian): executor_launch_count={executor_launch_count}, launch executor")
         executor_status, exit_code = __execute_daemon(daemon_main, daemon_args, logger)
+        executor_launch_count += 1
         if executor_status == ExecutorStatus.FORK_FAILED:
             # no retry, should investigate why fork failed
+            logger.debug(f"__execute_daemon_with_retry(guardian): executor_launch_count={executor_launch_count}, bail out since we are unable to launch executor")
             break
         if executor_status == ExecutorStatus.FINISHED:
             if restart_interval is None or exit_code == 0:
+                logger.debug(f"__execute_daemon_with_retry(guardian): executor_launch_count={executor_launch_count}, bail out since executor completed successfully")
                 break
-            seconds_to_sleep = math.ceil(restart_interval.total_seconds())
-            logger.debug(f"__execute_daemon_with_retry: retry after {seconds_to_sleep} seconds")
+            logger.debug(f"__execute_daemon_with_retry(guardian): executor_launch_count={executor_launch_count}, executor failed with {exit_code}, sleep for {seconds_to_sleep} seconds")
             sleep_if(seconds_to_sleep, lambda: not __quit_requested())
             continue
     logger.debug("__execute_daemon_with_retry(guardian): exit")
@@ -119,15 +139,17 @@ def __execute_daemon(daemon_main, daemon_args, logger):
 
     if new_pid > 0:
         logger.debug(f"__execute_daemon(guardian): executor(pid={new_pid}) launched, waiting for it to finish")
-        __APP_CONTEXT['executor_pid'] = new_pid
+        __APP_CONTEXT.executor_pid = new_pid
         _, exit_code = os.waitpid(new_pid, 0)
-        __APP_CONTEXT['executor_pid'] = None
+        __APP_CONTEXT.executor_pid = None
         logger.debug(f"__execute_daemon(guardian): executor(pid={new_pid}) finished, exit_code={exit_code}")
         logger.debug("__execute_daemon(guardian): exit")
         return ExecutorStatus.FINISHED, exit_code
 
     # we are in executor now
-    __APP_CONTEXT['is_guardian'] = False
+    __APP_CONTEXT.is_guardian = False
+    __APP_CONTEXT.executor_pid = os.getpid()
+    __APP_CONTEXT.guardian_pid = os.getppid()
     signal.signal(signal.SIGTERM, __request_executor_shutdown)  # regular kill command
 
     try:
@@ -136,21 +158,32 @@ def __execute_daemon(daemon_main, daemon_args, logger):
     except Exception:
         logger.exception(f"__execute_daemon(executor): failed")
         sys.exit(1)
-    
 
-########################################################################################
+
+#########################################################################################################
 # daemon_entry method should has the following signature
 #     method(darmon_args:Dict, quit_requested:Callable[[],bool]) ->None
-########################################################################################
-def run_daemon(*,
-               pid_filename: str,                               # filename, for the pid file
-               daemon_entry: str,                               # daemon entry function name
-               daemon_args: Optional[dict] = None,              # args passed to daemon
-               stdout_filename: Optional[str] = None,           # filename for the stdout
-               stderr_filename: Optional[str] = None,           # filename for the stderr
-               logging_config: Optional[dict] = None,           # log config
-               restart_interval: Optional[timedelta] = None,    # if executor failed, how long show we wait?
-               ) -> Tuple[DaemonRunStatus, Any]:
+# ------------------------------------------------------------------------------------------------------
+# - Both guardian and executor will try to kill each other upon receiving SIGTERM signal
+#   - If you kill (SIGTERM) an executor, the executor will send a SIGTERM to guardian, guardian will
+#     wait for executor to terminate and then quit, without trying to restart executor
+#   - If you kill (SIGTERM) guardian, it will send a SIGTERM to executor, and wait for the executor to
+#     terminate and then quit, without trying to restart executor
+# - user code (from daemon_entry) should constantly pull quit_requested() and return from the method
+#   as early as possible if quit_requested() returns True
+# - If restart_interval is None, the guardian will never seek to restart executor, instead, the guardian
+#   simply wait for the executor to terminate and then quit.
+#########################################################################################################
+def run_daemon(
+    *,
+    pid_filename:str,                                # filename, for the pid file
+    daemon_entry:str,                                # daemon entry function name
+    daemon_args:Any=None,                            # args passed to daemon
+    stdout_filename:Optional[str]=None,              # filename for the stdout
+    stderr_filename:Optional[str]=None,              # filename for the stderr
+    logging_config:Optional[dict]=None,              # log config
+    restart_interval:Optional[timedelta]=None,       # if executor failed, how long show we wait?
+) -> Tuple[DaemonRunStatus, Any]:
     """
     Launch a daemon
     :param pid_filename: The filename for the pid file, acting as a unique identifier for the daemon.
@@ -158,8 +191,8 @@ def run_daemon(*,
         The daemon entry function name, e.g., "main:foo", here, main is the module name and foo is
         the method name.
     :param daemon_args:Arguments pass to the daemon.
-    :param stdout_filename:A filename to store the stdout, if missing, will point to /dev/null
-    :param stderr_filename:A filename to store the stderr, if missing, will point to /dev/null
+    :param stdout_filename: Filename to store the stdout, if missing, will point to /dev/null
+    :param stderr_filename: Filename to store the stderr, if missing, will point to /dev/null
     :param logging_config:Log config, if missing, we won't initialize logging.
     :param restart_interval, if None, we won't try to restart executor, otherwise, we will restart executor after this interval
     :return:
@@ -191,36 +224,33 @@ def run_daemon(*,
     try:
         if stdout_filename == stderr_filename:
             # use the same file for stdout and stderr
-            out_f = err_f = open(stdout_filename, "ab")
+            out_f = err_f = open(stdout_filename, "wb")
         else:
-            out_f = open(stdout_filename, "ab")
-            err_f = open(stderr_filename, "ab")
+            out_f = open(stdout_filename, "wb")
+            err_f = open(stderr_filename, "wb")
         in_f = open(os.devnull)
     except OSError:
         pass
 
     if out_f is None:
-        __safe_close(in_f)
+        __safe_close_io(in_f, out_f, err_f)
         return DaemonRunStatus.REDIR_STDOUT_FAILED, None
+
     if err_f is None:
-        __safe_close(out_f)
-        __safe_close(in_f)
+        __safe_close_io(in_f, out_f, err_f)
         return DaemonRunStatus.REDIR_STDERR_FAILED, None
 
     new_pid = os.fork()
     if new_pid < 0:
-        __safe_close(out_f)
-        __safe_close(err_f)
-        __safe_close(in_f)
+        __safe_close_io(in_f, out_f, err_f)
         return DaemonRunStatus.FORK_FAILED, None
 
     if new_pid > 0:
-        __safe_close(out_f)
-        __safe_close(err_f)
-        __safe_close(in_f)
+        __safe_close_io(in_f, out_f, err_f)
         return DaemonRunStatus.LAUNCHED, new_pid
 
     # from here, we are in the child process
+    __APP_CONTEXT.guardian_pid = os.getpid()
     initialize_ok = False
     try:
         # redirect stdout, stderr
@@ -272,7 +302,7 @@ run_daemon(guardian): initialized{os.linesep}\
         logger.exception(f"run_daemon(guardian): failed")
         raise
     finally:
-        if __APP_CONTEXT['is_guardian']:
+        if __APP_CONTEXT.is_guardian:
             __safe_remove(pid_filename)
 
 
