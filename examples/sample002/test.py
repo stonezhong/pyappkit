@@ -16,7 +16,7 @@ LOG_CONFIG = {
             "class": "logging.handlers.TimedRotatingFileHandler",
             "level": "DEBUG",
             "formatter": "standard",
-            "filename": ".data/test.log",
+            "filename": ".data/test2.log",
             "interval": 1,
             "when": "midnight"
         },
