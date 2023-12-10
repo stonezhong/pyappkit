@@ -12,10 +12,53 @@ import argparse
 import json
 from datetime import timedelta, datetime
 import math
+from multiprocessing import Process, Value, set_start_method
+from abc import ABC, abstractmethod
 
-from multiprocessing import Process, Value
+#######################################################################################################
+# When you launch a daemon, you have 3 processes
+# - host process    : this is the process who calls run_daemon
+# - guardian process: this is forked from host process, and is the child process of host process.
+#                     this process monitors the executor process and will try to re-start executor
+#                     in case executor exit with non-zero exit code
+# - executor process: this is forked from executor process, and is the child process of the guardian
+#                     process. It calls custom specificed daemon code
+#
+# pid file            when a daemon is launched, it will save the guardian process pid in the pid file,
+#                     the pid file will be removed once the daemon is terminated.
+#######################################################################################################
+
+#######################################################################################################
+# Risk: guardian may fail without calling Executable's handle_exception method
+# A:
+#    There are cases guardian process is started but it failed to launch the executor for various
+#    reasons, for example, failed to write to pid file.
+#    So always tail the log file when you launch a daemon.
+#######################################################################################################
+
 
 DT_FORMAT = "%Y-%m-%d %H:%M:%S.%f"
+
+#######################################################################################################
+# This is the base class for both daemon and worker
+# - User need to create derived class and implement run method
+#######################################################################################################
+class Executable(ABC):
+    quit_requested: Callable[[], bool]
+
+    def __init__(self, *args, **kwargs):
+        self.quit_requested = kwargs["quit_requested"]
+
+    def handle_exception(self, ex:BaseException):
+        pass
+
+    def sleep(self, duration:timedelta):
+        seconds_to_wait = math.ceil(duration.total_seconds())
+        sleep_if(seconds_to_wait, lambda: not self.quit_requested())
+
+    @abstractmethod
+    def run(self, **kwargs):
+        pass
 
 class DaemonRunStatus(Enum):
     LAUNCHED = 1
@@ -110,7 +153,7 @@ def __safe_close_io(in_f:IO, out_f: IO, err_f: IO):
         __safe_close(err_f)
     __safe_close(in_f)
 
-def __execute_daemon_with_retry(daemon_main, daemon_args, logger, restart_interval):
+def __execute_daemon_with_retry(daemon_entry:str, daemon_args:dict, logger:logging.Logger, restart_interval:Optional[timedelta]):
     executor_launch_count = 0
     logger.debug("__execute_daemon_with_retry(guardian): enter")
     seconds_to_sleep = None if restart_interval is None else math.ceil(restart_interval.total_seconds())
@@ -119,7 +162,7 @@ def __execute_daemon_with_retry(daemon_main, daemon_args, logger, restart_interv
             logger.debug(f"__execute_daemon_with_retry(guardian): executor_launch_count={executor_launch_count}, bail out since quit requested")
             break
         logger.debug(f"__execute_daemon_with_retry(guardian): executor_launch_count={executor_launch_count}, launch executor")
-        executor_status, exit_code = __execute_daemon(daemon_main, daemon_args, logger)
+        executor_status, exit_code = __execute_daemon(daemon_entry, daemon_args, logger)
         executor_launch_count += 1
         if executor_status == ExecutorStatus.FORK_FAILED:
             # no retry, should investigate why fork failed
@@ -134,7 +177,7 @@ def __execute_daemon_with_retry(daemon_main, daemon_args, logger, restart_interv
             continue
     logger.debug("__execute_daemon_with_retry(guardian): exit")
 
-def __execute_daemon(daemon_main, daemon_args, logger):
+def __execute_daemon(daemon_entry:str, daemon_args:dict, logger:logging.Logger):
     logger.debug("__execute_daemon(guardian): enter")
     new_pid = os.fork()
 
@@ -152,23 +195,36 @@ def __execute_daemon(daemon_main, daemon_args, logger):
         logger.debug("__execute_daemon(guardian): exit")
         return ExecutorStatus.FINISHED, exit_code
 
+    ###########################################################
+    #
+    # Entry point of executor
+    #
+    ###########################################################
     # we are in executor now
+    set_start_method("spawn", force=True)
     __APP_CONTEXT.is_guardian = False
     __APP_CONTEXT.executor_pid = os.getpid()
     __APP_CONTEXT.guardian_pid = os.getppid()
     signal.signal(signal.SIGTERM, __request_executor_shutdown)  # regular kill command
 
+    daemon = None
     try:
-        daemon_main(daemon_args, __quit_requested)
+        daemon_class = __get_method(daemon_entry)
+        daemon = daemon_class(quit_requested=__quit_requested)
+        daemon.run(**daemon_args)
         sys.exit(0)
-    except Exception:
+    except Exception as ex:
+        if daemon is not None:
+            try:
+                daemon.handle_exception(ex)
+            except Exception:
+                logger.exception(f"__execute_daemon(executor): exception handler failed and ignored")
         logger.exception(f"__execute_daemon(executor): failed")
         sys.exit(1)
 
 
 #########################################################################################################
-# daemon_entry method should has the following signature
-#     method(darmon_args:Dict, quit_requested:Callable[[],bool]) ->None
+# daemon_entry method should point to a class that is derived from Daemon class
 # ------------------------------------------------------------------------------------------------------
 # - Both guardian and executor will try to kill each other upon receiving SIGTERM signal
 #   - If you kill (SIGTERM) an executor, the executor will send a SIGTERM to guardian, guardian will
@@ -184,7 +240,7 @@ def run_daemon(
     *,
     pid_filename:str,                                # filename, for the pid file
     daemon_entry:str,                                # daemon entry function name
-    daemon_args:Any=None,                            # args passed to daemon
+    daemon_args:dict=dict(),                         # args passed to daemon
     stdout_filename:Optional[str]=None,              # filename for the stdout
     stderr_filename:Optional[str]=None,              # filename for the stderr
     logging_config:Optional[dict]=None,              # log config
@@ -194,8 +250,8 @@ def run_daemon(
     Launch a daemon
     :param pid_filename: The filename for the pid file, acting as a unique identifier for the daemon.
     :param daemon_entry:
-        The daemon entry function name, e.g., "main:foo", here, main is the module name and foo is
-        the method name.
+        Points to class that is derived from Daemon., e.g., "mydaemon:MyDaemon", here, mydaemon is the module name and MyDaemon is
+        the class name.
     :param daemon_args:Arguments pass to the daemon.
     :param stdout_filename: Filename to store the stdout, if missing, will point to /dev/null
     :param stderr_filename: Filename to store the stderr, if missing, will point to /dev/null
@@ -255,9 +311,14 @@ def run_daemon(
         __safe_close_io(in_f, out_f, err_f)
         return DaemonRunStatus.LAUNCHED, new_pid
 
-    # from here, we are in the child process
+    ###########################################################
+    #
+    # Entry point of guardian
+    #
+    ###########################################################
     __APP_CONTEXT.guardian_pid = os.getpid()
     initialize_ok = False
+    logger = None
     try:
         # redirect stdout, stderr
         stdout_fn = sys.stdout.fileno()
@@ -281,7 +342,6 @@ def run_daemon(
 
         if logging_config is not None:
             logging.config.dictConfig(logging_config)
-        daemon_main = __get_method(daemon_entry)
         logger = logging.getLogger(__name__)
 
         initialize_ok = True
@@ -299,7 +359,7 @@ run_daemon(guardian): initialized{os.linesep}\
 
     try:
         signal.signal(signal.SIGTERM, __request_guardian_shutdown)  # regular kill command
-        __execute_daemon_with_retry(daemon_main, daemon_args, logger, restart_interval)
+        __execute_daemon_with_retry(daemon_entry, daemon_args, logger, restart_interval)
         # non guardian should not reach here
         logger.debug(f"run_daemon(guardian): exit")
         sys.exit(0)
@@ -312,15 +372,35 @@ run_daemon(guardian): initialized{os.linesep}\
             __safe_remove(pid_filename)
 
 
-def __worker_wrapper(entry:str, args:Any, stdout_filename:str, stderr_filename:str, worker_controller: Value, logging_config:dict):
-    logging.config.dictConfig(logging_config)
-    logger = logging.getLogger(__name__)
+def __worker_wrapper(pid_filename:str, entry:str, args:Any, stdout_filename:str, stderr_filename:str, worker_controller: Value, logging_config:dict):
+    ###########################################################
+    #
+    # Entry point of worker
+    #
+    ###########################################################
+    logger = None
+    try:
+        logging.config.dictConfig(logging_config)
+        logger = logging.getLogger(__name__)
 
-    logger.debug(f"""{entry}: enter
-    entry          : {entry}
+        with open(pid_filename, "wt") as pid_f:
+            print(os.getpid(), file=pid_f)
+
+        logger.debug(f"""worker({entry}): started
+    pid_filename   : {pid_filename}
     args           : {args}
     stdout_filename: {stdout_filename}
     stderr_filename: {stderr_filename}""")
+
+        __worker_wrapper_do(logger, entry, args, stdout_filename, stderr_filename, worker_controller, logging_config)
+    except Exception:
+        if logger is not None:
+            logger.exception(f"{entry}: failed")
+        raise
+    finally:
+        __safe_remove(pid_filename)
+
+def __worker_wrapper_do(logger: logging.Logger, entry:str, args:Any, stdout_filename:str, stderr_filename:str, worker_controller: Value, logging_config:dict):
 
     if stdout_filename is None:
         stdout_filename = os.devnull
@@ -368,11 +448,18 @@ def __worker_wrapper(entry:str, args:Any, stdout_filename:str, stderr_filename:s
     err_f.close()
     in_f.close()
 
+    worker = None
     try:
-        entry_f = __get_method(entry)
-        entry_f(args, lambda:worker_controller.value)
+        worker_class = __get_method(entry)
+        worker = worker_class(quit_requested=lambda:worker_controller.value)
+        worker.run(**args)
         logger.debug(f"{entry}: exit")
-    except Exception:
+    except Exception as ex:
+        if worker is not None:
+            try:
+                worker.handle_exception(ex)
+            except Exception:
+                logger.exception(f"__execute_daemon(executor): exception handler failed and ignored")
         logger.exception(f"{entry} failed")
         raise
 
@@ -398,9 +485,11 @@ class WorkerHistoryInfo:
 
 class WorkerInfo:
     index: int
-    entry: Optional[str]
+    pid_filename: str
+    entry: str
+    alias: Optional[str]
     args: Any
-    logging_config: Optional[dict]
+    logging_config: dict
     stdout_filename: Optional[str]
     stderr_filename: Optional[str]
     process: Optional[Process]
@@ -408,13 +497,15 @@ class WorkerInfo:
     start_time: Optional[datetime]
     history: List[WorkerHistoryInfo]
 
-    def __init__(self, index:int):
+    def __init__(self, index:int, worker_start_info:"WorkerStartInfo"):
         self.index = index
-        self.entry = None
-        self.args = None
-        self.logging_config = None
-        self.stdout_filename = None
-        self.stderr_filename = None
+        self.pid_filename = worker_start_info.pid_filename
+        self.entry = worker_start_info.entry
+        self.alias = worker_start_info.alias
+        self.args = worker_start_info.args
+        self.logging_config = worker_start_info.logging_config
+        self.stdout_filename = worker_start_info.stdout_filename
+        self.stderr_filename = worker_start_info.stderr_filename
         self.process = None
         self.start_after = None
         self.start_time = None
@@ -439,6 +530,7 @@ class WorkerInfo:
         return {
             "index": self.index,
             "entry": self.entry,
+            "alias": self.alias,
             "stdout_filename": self.stdout_filename,
             "stderr_filename": self.stderr_filename,
             "pid": None if self.process is None else self.process.pid,
@@ -447,15 +539,29 @@ class WorkerInfo:
             "history": [item.to_json() for item in self.history]
         }
 
-class Worker:
+class WorkerStartInfo:
+    pid_filename: str
     entry: str
+    alias: Optional[str]
     args: Any
     logging_config: dict
     stdout_filename: Optional[str]
     stderr_filename: Optional[str]
 
-    def __init__(self, *, entry:str, logging_config:dict, args:Any=None, stdout_filename:str=None, stderr_filename:str=None):
+    def __init__(
+        self,
+        *,
+        pid_filename:str,
+        entry:str,
+        logging_config:dict,
+        args:Any=None,
+        stdout_filename:str=None,
+        stderr_filename:str=None,
+        alias:Optional[str]=None
+    ):
+        self.pid_filename = pid_filename
         self.entry = entry
+        self.alias = alias
         self.logging_config = logging_config
         self.args = args
         self.stdout_filename = stdout_filename
@@ -468,8 +574,8 @@ class Worker:
 # - Otherwise, it will try to restart a failed worker after restart_interval since we detect a worker
 #   failed
 #########################################################################################################
-def run_worker(
-    workers: List[Worker],
+def run_workers(
+    worker_start_infos: List[WorkerStartInfo],
     *,
     debug_filename:Optional[str],
     check_interval:timedelta=timedelta(minutes=1),
@@ -480,13 +586,8 @@ def run_worker(
     check_interval_seconds = math.ceil(check_interval.total_seconds())
 
     worker_info_list = []
-    for index, worker in enumerate(workers):
-        worker_info = WorkerInfo(index)
-        worker_info.entry = worker.entry
-        worker_info.args = worker.args
-        worker_info.logging_config = worker.logging_config
-        worker_info.stdout_filename = worker.stdout_filename
-        worker_info.stderr_filename = worker.stderr_filename
+    for index, worker_start_info in enumerate(worker_start_infos):
+        worker_info = WorkerInfo(index, worker_start_info)
         worker_info_list.append(worker_info)
 
     worker_controller = Value('b', False)
@@ -519,6 +620,7 @@ def run_worker(
                 p =  Process(
                     target=__worker_wrapper,
                     args=(
+                        worker_info.pid_filename,
                         worker_info.entry,
                         worker_info.args,
                         worker_info.stdout_filename,
@@ -541,7 +643,6 @@ def run_worker(
                 json.dump(payload, f)
                 logger.debug(f"run_worker: debug info dummped")
 
-        logger.debug(f"run_worker: sleep for {check_interval_seconds} seconds")
         sleep_if(check_interval_seconds, lambda: not __quit_requested())
 
     # if we quit the loop, we must have received SIGTERM signal

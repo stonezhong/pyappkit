@@ -6,7 +6,7 @@ from datetime import timedelta
 
 LOG_CONFIG = {
     "version": 1,
-    "disable_existing_loggers": True,
+    "disable_existing_loggers": False,
     "formatters": {
         "standard": {
             "format": "%(asctime)s - %(process)d - %(name)s - %(levelname)s - %(message)s"
@@ -21,29 +21,43 @@ LOG_CONFIG = {
             "interval": 1,
             "when": "midnight"
         },
+        "fileSysHandler": {
+            "class": "logging.handlers.TimedRotatingFileHandler",
+            "level": "DEBUG",
+            "formatter": "standard",
+            "filename": ".data/sys.log",
+            "interval": 1,
+            "when": "midnight"
+        }
     },
     "root": {
         "handlers": ["fileHandler"],
         "level": "DEBUG",
     },
+    "loggers": {
+        "pyappkit.daemon": {
+            "handlers": ["fileSysHandler"],
+            "level": "DEBUG"
+        }
+    }
 }
 
 
 def main():
     os.makedirs(".data", exist_ok=True)
-    status, extra = run_daemon(
+    status, pid = run_daemon(
         pid_filename=".data/foo.pid",
         stdout_filename=".data/out.txt",
         stderr_filename=".data/err.txt",
-        daemon_entry="daemon_impl:main",
+        daemon_entry="daemon_impl:MyDaemon",
         logging_config=LOG_CONFIG,
         daemon_args=dict(foo=1, bar=2),
         restart_interval=timedelta(seconds=10)
     )
     if status == DaemonRunStatus.LAUNCHED:
-        print(f"Daemon launched, pid = {extra}")
+        print(f"Daemon launched, pid = {pid}")
     else:
-        print(f"Unable to launch daemon, status={status}, extra={extra}")
+        print(f"Unable to launch daemon, status={status}, extra={pid}")
 
 
 if __name__ == '__main__':

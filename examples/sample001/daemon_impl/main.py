@@ -1,17 +1,16 @@
 import logging
 logger = logging.getLogger(__name__)
 
-import time
-from typing import Dict, Callable
+from datetime import timedelta
+from pyappkit import Executable
 
-
-def main(daemon_args: Dict, quit_requested: Callable[[], bool]) -> None:
-    logger.info(daemon_args)
-
-    while True:
-        print("I am running, ...")
-        logger.info("I am running, ...")
-        time.sleep(1)
-        if quit_requested():
-            print("I am done!")
-            break
+class MyDaemon(Executable):
+    def run(self, *, foo:int, bar:int)->None:
+        logger.info(f"foo={foo}, bar={bar}")
+        while True:
+            print("I am running, ...")
+            logger.info("I am running, ...")
+            self.sleep(timedelta(seconds=10))
+            if self.quit_requested():
+                print("I am done!")
+                break

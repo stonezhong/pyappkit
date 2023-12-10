@@ -1,1 +1,1 @@
-from .main import main, worker_main
+from .main import MyDaemon, MyWorker
