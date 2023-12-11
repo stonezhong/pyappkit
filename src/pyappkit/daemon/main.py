@@ -77,6 +77,8 @@ class AppContext:
     guardian_pid: Optional[int]
     is_guardian: bool
     worker_controller: Optional[Value]
+    guardian_killed: bool
+    executor_killed: bool
 
     def __init__(self, is_guardian:bool):
         self.quit_requested = False
@@ -84,20 +86,28 @@ class AppContext:
         self.executor_pid = None
         self.guardian_pid = None
         self.worker_controller = None
+        self.guardian_killed = False
+        self.executor_killed = False
 
 __APP_CONTEXT = AppContext(is_guardian=True)
 
 def __request_guardian_shutdown(signal_umber, frame):
     _, _ = signal_umber, frame
     __APP_CONTEXT.quit_requested = True
-    __safe_kill(__APP_CONTEXT.executor_pid)
+    if not __APP_CONTEXT.executor_killed and __APP_CONTEXT.executor_pid is not None:
+        __safe_kill(__APP_CONTEXT.executor_pid)
+        __APP_CONTEXT.executor_killed = True
+
 
 def __request_executor_shutdown(signal_umber, frame):
     _, _ = signal_umber, frame
     __APP_CONTEXT.quit_requested = True
     if __APP_CONTEXT.worker_controller is not None:
         __APP_CONTEXT.worker_controller.value = True
-    __safe_kill(__APP_CONTEXT.guardian_pid)
+    if not __APP_CONTEXT.guardian_killed and __APP_CONTEXT.guardian_pid is not None:
+        __safe_kill(__APP_CONTEXT.guardian_pid)
+        __APP_CONTEXT.guardian_killed = True
+
 
 
 def __quit_requested():
@@ -189,6 +199,7 @@ def __execute_daemon(daemon_entry:str, daemon_args:dict, logger:logging.Logger):
     if new_pid > 0:
         logger.debug(f"__execute_daemon(guardian): executor(pid={new_pid}) launched, waiting for it to finish")
         __APP_CONTEXT.executor_pid = new_pid
+        __APP_CONTEXT.executor_killed = False
         _, exit_code = os.waitpid(new_pid, 0)
         __APP_CONTEXT.executor_pid = None
         logger.debug(f"__execute_daemon(guardian): executor(pid={new_pid}) finished, exit_code={exit_code}")
@@ -210,16 +221,18 @@ def __execute_daemon(daemon_entry:str, daemon_args:dict, logger:logging.Logger):
     daemon = None
     try:
         daemon_class = __get_method(daemon_entry)
-        daemon = daemon_class(quit_requested=__quit_requested)
+        daemon = daemon_class(**daemon_args, quit_requested=__quit_requested)
         daemon.run(**daemon_args)
         sys.exit(0)
     except Exception as ex:
+        logger.exception(f"__execute_daemon(executor): failed")
         if daemon is not None:
             try:
+                logger.debug(f"__execute_daemon(executor): enter exception handler")
                 daemon.handle_exception(ex)
+                logger.debug(f"__execute_daemon(executor): leaving exception handler")
             except Exception:
                 logger.exception(f"__execute_daemon(executor): exception handler failed and ignored")
-        logger.exception(f"__execute_daemon(executor): failed")
         sys.exit(1)
 
 
@@ -451,16 +464,18 @@ def __worker_wrapper_do(logger: logging.Logger, entry:str, args:Any, stdout_file
     worker = None
     try:
         worker_class = __get_method(entry)
-        worker = worker_class(quit_requested=lambda:worker_controller.value)
+        worker = worker_class(**args, quit_requested=lambda:worker_controller.value)
         worker.run(**args)
         logger.debug(f"{entry}: exit")
     except Exception as ex:
+        logger.exception(f"{entry} failed")
         if worker is not None:
             try:
+                logger.debug(f"__worker_wrapper: enter exception handler")
                 worker.handle_exception(ex)
+                logger.debug(f"__worker_wrapper: leaving exception handler")
             except Exception:
-                logger.exception(f"__execute_daemon(executor): exception handler failed and ignored")
-        logger.exception(f"{entry} failed")
+                logger.exception(f"__worker_wrapper: exception handler failed and ignored")
         raise
 
 class WorkerHistoryInfo:
@@ -487,7 +502,7 @@ class WorkerInfo:
     index: int
     pid_filename: str
     entry: str
-    alias: Optional[str]
+    name: Optional[str]
     args: Any
     logging_config: dict
     stdout_filename: Optional[str]
@@ -501,7 +516,7 @@ class WorkerInfo:
         self.index = index
         self.pid_filename = worker_start_info.pid_filename
         self.entry = worker_start_info.entry
-        self.alias = worker_start_info.alias
+        self.name = worker_start_info.name
         self.args = worker_start_info.args
         self.logging_config = worker_start_info.logging_config
         self.stdout_filename = worker_start_info.stdout_filename
@@ -530,7 +545,7 @@ class WorkerInfo:
         return {
             "index": self.index,
             "entry": self.entry,
-            "alias": self.alias,
+            "name": self.name,
             "stdout_filename": self.stdout_filename,
             "stderr_filename": self.stderr_filename,
             "pid": None if self.process is None else self.process.pid,
@@ -542,8 +557,8 @@ class WorkerInfo:
 class WorkerStartInfo:
     pid_filename: str
     entry: str
-    alias: Optional[str]
-    args: Any
+    name: Optional[str]
+    args: dict
     logging_config: dict
     stdout_filename: Optional[str]
     stderr_filename: Optional[str]
@@ -557,11 +572,11 @@ class WorkerStartInfo:
         args:Any=None,
         stdout_filename:str=None,
         stderr_filename:str=None,
-        alias:Optional[str]=None
+        name:Optional[str]=None
     ):
         self.pid_filename = pid_filename
         self.entry = entry
-        self.alias = alias
+        self.name = name
         self.logging_config = logging_config
         self.args = args
         self.stdout_filename = stdout_filename

@@ -15,7 +15,7 @@ class MyDaemon(Executable):
                 WorkerStartInfo(
                     pid_filename=".data/worker-1.pid",
                     entry="daemon_impl:MyWorker",
-                    alias="foo",
+                    name="foo",
                     args={},
                     logging_config=get_log_config(1),
                     stdout_filename=".data/w1.out",
@@ -24,7 +24,7 @@ class MyDaemon(Executable):
                 WorkerStartInfo(
                     pid_filename=".data/worker-2.pid",
                     entry="daemon_impl:MyWorker",
-                    alias="bar",
+                    name="bar",
                     args={},
                     logging_config=get_log_config(2),
                     stdout_filename=".data/w2.out",
