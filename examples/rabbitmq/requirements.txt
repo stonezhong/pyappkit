@@ -1,2 +1,2 @@
-pyappkit==0.0.14
+pyappkit==0.0.17
 pika==1.3.2

@@ -43,7 +43,8 @@ class ApplicationConfig:
             "app_dir": self.app_dir,
             "daemon_status_dir": self.daemon_status_dir
         }
-        self.stage      = self.get_config_json("deployment.json")["stage"]
+        # you always have this file if you are using mordor to deploy your app
+        self.stage = self.get_json(os.path.join(self.cfg_dir, "_deployment.json"))["app"]["stage"]
         self._ctx.update({
             "stage": self.stage
         })
