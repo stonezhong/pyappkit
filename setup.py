@@ -11,7 +11,7 @@ with open(os.path.join(HERE, "README.md"), "r") as f:
 # This call to setup() does all the work
 setup(
     name="pyappkit",
-    version="0.0.12",
+    version="0.0.13",
     description="Python Application Kit",
     long_description=README,
     long_description_content_type="text/markdown",
