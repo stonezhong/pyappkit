@@ -5,6 +5,8 @@ from typing import Tuple, Any, Callable, Optional, List
 from abc import ABC, abstractmethod
 from datetime import timedelta, datetime
 
+from pyappkit import dt2str, td2num, str2dt, num2td
+
 import pika
 from pika.adapters.blocking_connection import BlockingConnection, BlockingChannel
 
@@ -36,6 +38,25 @@ class MessageDebugInfo:
 
     def __repr__(self):
         return f"MessageDebugInfo(queued_time='{self.queued_time}', process_time='{self.process_time}', process_duration='{self.process_duration}', exception_message={self.exception_message}, exception_type={self.exception_type})"
+
+    def to_dict(self)->Any:
+        return {
+            "queued_time": dt2str(self.queued_time),
+            "process_time": dt2str(self.process_time),
+            "process_duration": td2num(self.process_duration),
+            "exception_message": self.exception_message,
+            "exception_type": self.exception_type
+        }
+
+    @classmethod
+    def from_dict(cls, json_payload:Any)->"MessageDebugInfo":
+        return MessageDebugInfo(
+            queued_time = str2dt(json_payload["queued_time"]),
+            process_time = str2dt(json_payload.get("process_time")),
+            process_duration = num2td(json_payload.get("process_duration")),
+            exception_message = json_payload.get("exception_message"),
+            exception_type = json_payload.get("exception_type"),
+        )
 
 class MessageEnvelope:
     queued_time: Optional[datetime]                         # when this message is queued
@@ -74,6 +95,28 @@ class MessageEnvelope:
 
     def __repr__(self):
         return f"MessageEnvelope(queued_time='{self.queued_time}', process_time='{self.process_time}', process_duration='{self.process_duration}', message={self.message}, debug_infos={[debug_info for debug_info in self.debug_infos]})"
+
+    def to_dict(self)->Any:
+        return {
+            "queued_time": dt2str(self.queued_time),
+            "process_time": dt2str(self.process_time),
+            "process_duration": td2num(self.process_duration),
+            "debug_infos": [debug_info.to_dict() for debug_info in self.debug_infos],
+            "message": None
+        }
+    
+    @classmethod
+    def from_dict(cls, json_payload:Any)->"MessageEnvelope":
+        return MessageEnvelope(
+            queued_time = str2dt(json_payload["queued_time"]),
+            process_time = str2dt(json_payload.get("process_time")),
+            process_duration = num2td(json_payload.get("process_duration")),
+            debug_infos = [
+                MessageDebugInfo.from_dict(debug_info_payload) for debug_info_payload in json_payload["debug_infos"]
+            ],
+            message = None
+        )
+
 
 class Serializer:
     @abstractmethod

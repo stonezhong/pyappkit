@@ -1,46 +1,16 @@
 #!/usr/bin/env python
 # -*- coding: UTF-8 -*-
-import argparse
 
-LOG_CONFIG = {
-    "version": 1,
-    "disable_existing_loggers": True,
-    "formatters": {
-        "standard": {
-            "format": "%(asctime)s - %(process)d - %(name)s - %(levelname)s - %(message)s"
-        }
-    },
-    "handlers": {
-        "console": {
-            "class": "logging.StreamHandler",
-            "level": "DEBUG",
-            "formatter": "standard",
-            "stream": "ext://sys.stdout"
-        },
-    },
-    "root": {
-        "handlers": ["console"],
-        "level": "DEBUG",
-    },
-    "loggers": {
-        "pika": {
-            "handlers": ["console"],
-            "level": "FATAL",
-            "proagate": False
-        }
-    }
-}
+from config import LOG_CONFIG
 import logging.config
 logging.config.dictConfig(LOG_CONFIG)
 
 import logging
 logger = logging.getLogger(__name__)
 
-
-import time
+import argparse
 import signal
-import pika
-from pyappkit.rabbitmq import MQClient, MQProcessor, Serializer, MessageEnvelope, MessageDebugInfo
+from pyappkit.rabbitmq import MQClient, MQProcessor, MessageEnvelope
 from datetime import timedelta
 from models import MySerializer
 
