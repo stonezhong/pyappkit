@@ -46,7 +46,7 @@ def main():
         pid_filename=".data/foo.pid",
         stdout_filename=".data/out.txt",
         stderr_filename=".data/err.txt",
-        daemon_entry="test:daemon_main",
+        daemon_entry="test1:daemon_main",
         logging_config=LOG_CONFIG,
         daemon_args=dict(foo=1, bar=2),
         restart_interval=timedelta(seconds=10)
