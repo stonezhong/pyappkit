@@ -63,7 +63,7 @@ def daemon_main(*, foo:int, bar:int):
         [
             WorkerStartInfo(
                 pid_filename=".data/worker-1.pid",
-                entry="test2:worker",
+                entry="test2:worker_main",
                 name="worker-1",
                 logging_config=get_worker_log_config(1),
                 args={"color": "red"},
@@ -72,7 +72,7 @@ def daemon_main(*, foo:int, bar:int):
             ),
             WorkerStartInfo(
                 pid_filename=".data/worker-2.pid",
-                entry="test2:worker",
+                entry="test2:worker_main",
                 name="worker-2",
                 logging_config=get_worker_log_config(2),
                 args={"color": "yellow"},
@@ -82,7 +82,7 @@ def daemon_main(*, foo:int, bar:int):
         ],
         debug_filename=".data/debug.json",
         check_interval=timedelta(seconds=5),
-        restart_interval=timedelta(seconds=20)
+        # restart_interval=timedelta(seconds=20)
     )
 
 
@@ -102,8 +102,9 @@ def main():
     else:
         print(f"Unable to launch daemon, status={status}, extra={pid}")
 
-def worker(*, color:str):
+def worker_main(*, color:str):
     logger.debug(f"color={color}")
+    raise Exception("Oops")
     while not quit_requested():
         logger.info("worker is running")
         sleep(5)

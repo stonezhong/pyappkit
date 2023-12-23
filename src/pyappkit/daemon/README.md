@@ -13,6 +13,9 @@
     * [worker I/O redirect](#worker-io-redirect)
     * [worker logging](#worker-logging)
     * [worker args](#worker-args)
+    * [debug file](#debug-file)
+    * [check_interval](#check_interval)
+    * [worker crash recovery](#worker-crash-recovery)
 * [Other APIs](#other-apis)
     * [quit_requested](#quit_requested)
     * [sleep](#sleep)
@@ -79,6 +82,16 @@ The content you passed to `WorkerStartInfo.args` will be passed to your worker e
 def worker_entry(*, x:int, y:int):
     pass
 ```
+
+## debug file
+You can pass a `debug_filename` to `start_workers`, the worker controller will dump it's debug info to it. If you want to debug your worker, you can specify this parameter.
+
+## check_interval
+This parameter contols how often your worker controler checks for each worker status.
+
+## worker crash recovery
+If you pass a non-None `restart_interval`, then upon worker process quit, worker controller will try to restart it, this parameter controls how long to wait before restart. If this parameter is None, no restart will be performed.
+
 
 # Other APIs
 ## quit_requested
