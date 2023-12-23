@@ -1,11 +1,8 @@
-# Python Application Kit
+# Purpose
 
-# APIs
-## run_daemon
-## run_worker
+* This python package provide a set of utilities to help user to write distributed applications.
 
-
-Please check out the examples:
-* [sample001: How to launch a daemon](examples/sample001)
-* [sample002: How to launch a daemon with multiple worker](examples/sample001)
-* [rabbitmq:  Sample for consumer and producer](examples/rabbitmq)
+# [Daemon](src/pyappkit/daemon)
+# RabbitMQ 
+# Application Config
+# Common Utils
