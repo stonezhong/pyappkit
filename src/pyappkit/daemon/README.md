@@ -113,4 +113,4 @@ It sleeps, but will retrun if quit_requested for current process becomes true.
 # What happened when you kill a process?
 * For guardian process, it will try to kill executor process, and once executor process quits, guardian will quit as well.
 * For executor process, it will try to kill guardian process, and quit
-* For worker process, it will does not handle SIGTERM, so a worker will simply be killed. The executor who started the worker may re-launch it if it is configured.
+* For worker process, it handles SIGTERM signal, and result in quit_requested() API to return True if you ever kill a worker.
