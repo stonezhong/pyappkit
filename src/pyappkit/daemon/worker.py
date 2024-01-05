@@ -235,6 +235,7 @@ def worker_main(
 
         SIG_TERM_HANDLER.role = ProcessRole.WORKER
         SIG_TERM_HANDLER.worker_controller = worker_controller
+        SIG_TERM_HANDLER.register()
 
         worker_method = get_method(entry)
         worker_method(**args)

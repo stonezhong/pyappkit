@@ -1,0 +1,5 @@
+demo1:
+  args:
+    x: 1
+    y: 2
+  restart_interval_seconds: null

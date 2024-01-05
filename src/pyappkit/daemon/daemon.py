@@ -19,8 +19,8 @@ class DaemonRunStatus(Enum):
 #########################################################################################################
 # start_daemon                  API
 # guardian_main                 In guardian, main entry of guardian
-# launch_executor               In guardian, launch executor
 # launch_executor_with_retry    In guardian, launch executor, handle error and retry logic
+# launch_executor               In guardian, launch executor
 # executor_main                 In executor, main entry of executor
 #########################################################################################################
 

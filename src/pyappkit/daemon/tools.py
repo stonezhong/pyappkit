@@ -56,7 +56,6 @@ class SigTermHandler:
             return
 
         if self.role == ProcessRole.WORKER:
-            # TODO
             pass
 
     def register(self):
@@ -131,6 +130,8 @@ def get_method(method_name:str):
 def quit_requested():
     # works for worker, guardian and executor
     if SIG_TERM_HANDLER.role == ProcessRole.WORKER:
+        if SIG_TERM_HANDLER.quit_requested:
+            return True
         return SIG_TERM_HANDLER.worker_controller.value
     return SIG_TERM_HANDLER.quit_requested
 

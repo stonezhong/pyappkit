@@ -19,6 +19,8 @@
 * [Other APIs](#other-apis)
     * [quit_requested](#quit_requested)
     * [sleep](#sleep)
+* [What happened when you kill a process?](#what-happened-when-you-kill-a-process)
+* [mordor integration](mordor.md)
 
 # creae daemon
 To create a daemon, you may call `start_daemon`. You can look at example at [here](https://github.com/stonezhong/pyappkit/blob/main/examples/daemon/test1.py)
@@ -92,14 +94,14 @@ This parameter contols how often your worker controler checks for each worker st
 ## worker crash recovery
 If you pass a non-None `restart_interval`, then upon worker process quit, worker controller will try to restart it, this parameter controls how long to wait before restart. If this parameter is None, no restart will be performed.
 
-
 # Other APIs
 ## quit_requested
 ```python
 def quit_requested()->bool:
     ...
 ```
-It returns if the current guardian/executor/worker has been asked to quit or not.
+For executor, if it receives a SIGTERM signal, then this API returns True
+For worker, if it receives a SIGTERM signal, or the executor want the worker to quit, then then API returns True
 
 ## sleep
 ```python
@@ -107,3 +109,8 @@ def sleep(seconds:float, step_seconds:float=1):
     ...
 ```
 It sleeps, but will retrun if quit_requested for current process becomes true.
+
+# What happened when you kill a process?
+* For guardian process, it will try to kill executor process, and once executor process quits, guardian will quit as well.
+* For executor process, it will try to kill guardian process, and quit
+* For worker process, it will does not handle SIGTERM, so a worker will simply be killed. The executor who started the worker may re-launch it if it is configured.

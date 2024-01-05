@@ -48,7 +48,7 @@ class ApplicationConfig:
         self._ctx.update({
             "stage": self.stage
         })
-    
+
     def __repr__(self):
         return f"ApplicationConfig(name=\"{self.name}\", stage=\"{self.stage}\")"
 
@@ -79,7 +79,7 @@ class ApplicationConfig:
     def load_template(self, filename:str, context:dict={}):
         if not os.path.isfile(filename):
             return None
-        
+
         environment = jinja2.Environment()
         ctx = copy(self._ctx)
         ctx.update(context)
@@ -93,7 +93,7 @@ class ApplicationConfig:
             return Manifest(self.get_yaml(filename))
         filename = os.path.join(self.app_dir, "manifest.json")
         if os.path.isfile(filename):
-            return Manifest(self.get_json(filename))       
+            return Manifest(self.get_json(filename))
         return None
 
 class Manifest:
