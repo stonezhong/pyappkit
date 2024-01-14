@@ -2,6 +2,7 @@
 * [Module Dependency](#module-dependency)
 * [Classes](#classes)
     * [MQProcessor](#mqprocessor)
+    * [MQClient](#mqclient)
 
 # Module Dependency
 Put `pika` in your requiremenrts.txt:
@@ -47,12 +48,3 @@ You can see how many times a message failed to process and for what reason it fa
 
 ## MQClient
 Represent a message queue client.
-
-
-
-
-
-# Features
-- Client call MQClient.send_message to post message to the normal queue
-
-
