@@ -2,6 +2,7 @@
 * [Module Dependency](#module-dependency)
 * [Classes](#classes)
     * [MQProcessor](#mqprocessor)
+    * [MessageEnvelope](#messageenvelope)
     * [MQClient](#mqclient)
 
 # Module Dependency
