@@ -123,6 +123,7 @@ class Serializer:
     def serialize(self, message_envelope:MessageEnvelope)->bytes:
         pass
 
+    @abstractmethod
     def deserialize(self, payload:bytes)->MessageEnvelope:
         pass
 
